@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "817688931018",
+    "project_id": "fruit-capitals",
+    "storage_bucket": "fruit-capitals.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:817688931018:android:6bece7bb0e5bc721f7e233",
+        "android_client_info": {
+          "package_name": "com.example.fruitcapitals"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "817688931018-u12q3pc7rkmiibfnhprtshuur206duv6.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA6J-yB9IOt_WRZ9Q3V55x_rj5v-c121nU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "817688931018-u12q3pc7rkmiibfnhprtshuur206duv6.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
