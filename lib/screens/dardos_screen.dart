@@ -1,10 +1,12 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/firestore_service.dart';
 import '../services/floracion_service.dart';
 import 'crear_dardo_screen.dart';
 import 'dardo_detalle_screen.dart';
 
-class DardosScreen extends StatelessWidget {
+class DardosScreen extends StatefulWidget {
   final String cuartelId;
   final String cuartelNombre;
   final String hileraId;
@@ -12,7 +14,7 @@ class DardosScreen extends StatelessWidget {
   final String mataId;
   final int numeroMata;
 
-  DardosScreen({
+  const DardosScreen({
     super.key,
     required this.cuartelId,
     required this.cuartelNombre,
@@ -22,19 +24,44 @@ class DardosScreen extends StatelessWidget {
     required this.numeroMata,
   });
 
+  @override
+  State<DardosScreen> createState() => _DardosScreenState();
+}
+
+class _DardosScreenState extends State<DardosScreen> {
   final FloracionService _service = FloracionService();
+  bool _canCreateDardo = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRole();
+  }
+
+  Future<void> _loadRole() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final role = await FirestoreService().getUserRole(uid);
+    if (!mounted) return;
+
+    final r = role.toLowerCase();
+    setState(() {
+      _canCreateDardo = !r.startsWith('jefe');
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Dardos – Planta $numeroMata (Hilera $numeroHilera)'),
+        title: Text('Dardos – Planta ${widget.numeroMata} (Hilera ${widget.numeroHilera})'),
       ),
       body: StreamBuilder(
         stream: _service.getDardos(
-          cuartelId: cuartelId,
-          hileraId: hileraId,
-          mataId: mataId,
+          cuartelId: widget.cuartelId,
+          hileraId: widget.hileraId,
+          mataId: widget.mataId,
         ),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -72,12 +99,12 @@ class DardosScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => DardoDetalleScreen(
-                          cuartelId: cuartelId,
-                          cuartelNombre: cuartelNombre,
-                          hileraId: hileraId,
-                          numeroHilera: numeroHilera,
-                          mataId: mataId,
-                          numeroMata: numeroMata,
+                          cuartelId: widget.cuartelId,
+                          cuartelNombre: widget.cuartelNombre,
+                          hileraId: widget.hileraId,
+                          numeroHilera: widget.numeroHilera,
+                          mataId: widget.mataId,
+                          numeroMata: widget.numeroMata,
                           dardoId: d.id,
                           dardoNumero: d.numero,
                         ),
@@ -90,22 +117,24 @@ class DardosScreen extends StatelessWidget {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.add),
-        label: const Text('Crear dardo'),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => CrearDardoScreen(
-                cuartelId: cuartelId,
-                hileraId: hileraId,
-                mataId: mataId,
-              ),
-            ),
-          );
-        },
-      ),
+      floatingActionButton: _canCreateDardo
+          ? FloatingActionButton.extended(
+              icon: const Icon(Icons.add),
+              label: const Text('Crear dardo'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => CrearDardoScreen(
+                      cuartelId: widget.cuartelId,
+                      hileraId: widget.hileraId,
+                      mataId: widget.mataId,
+                    ),
+                  ),
+                );
+              },
+            )
+          : null,
     );
   }
 }

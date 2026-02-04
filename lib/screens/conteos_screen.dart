@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/cuartel.dart';
 import '../models/conteoflores.dart';
@@ -19,6 +24,7 @@ class _ConteosScreenState extends State<ConteosScreen> {
   final _firestore = FirestoreService();
   final _floracion = FloracionService();
   final _dateFmt = DateFormat('dd/MM/yyyy HH:mm');
+  bool _exporting = false;
 
   Cuartel? _cuartel;
   String? _cuartelId;
@@ -85,6 +91,336 @@ class _ConteosScreenState extends State<ConteosScreen> {
     return 0;
   }
 
+  String _safeFileName(String raw) {
+    return raw.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+  }
+
+  String _safeSheetName(String raw, {int maxLen = 31}) {
+    var value = raw.replaceAll(RegExp(r'[:\\\\/?*\\[\\]]'), '_').trim();
+    if (value.isEmpty) value = 'Cuartel';
+    if (value.length > maxLen) {
+      value = value.substring(0, maxLen);
+    }
+    return value;
+  }
+
+  Future<List<_ConteoDardoExportRow>> _buildExportRowsForCuartel({
+    required String cuartelId,
+    required String cuartelNombre,
+  }) async {
+    final hilerasSnap = await FirebaseFirestore.instance
+        .collection('cuarteles')
+        .doc(cuartelId)
+        .collection('hileras')
+        .orderBy('numero')
+        .get();
+
+    Map<int, int> parseDardosPorYema(dynamic rawMap) {
+      final parsed = <int, int>{};
+      if (rawMap is! Map) return parsed;
+      rawMap.forEach((key, value) {
+        final k = int.tryParse(key.toString());
+        final v = _parseInt(value);
+        if (k != null && k >= 3 && k <= 10) {
+          parsed[k] = v;
+        }
+      });
+      return parsed;
+    }
+
+    _ConteoDardoExportRow toRow({
+      required int numeroHilera,
+      required int numeroMata,
+      required Map<String, dynamic> data,
+    }) {
+      final dardosPorYema = parseDardosPorYema(data['dardosPorYema']);
+      final total = dardosPorYema.values.fold<int>(0, (a, b) => a + b);
+      final totalDardos = total > 0 ? total : _parseInt(data['cantidadDardos']);
+      return _ConteoDardoExportRow(
+        cuartelNombre: cuartelNombre,
+        numeroHilera: numeroHilera,
+        numeroMata: numeroMata,
+        dardosPorYema: dardosPorYema,
+        cantidadDardos: totalDardos,
+        ramillas: _parseInt(data['ramillas']),
+      );
+    }
+
+    final rowsByHilera = await Future.wait(
+      hilerasSnap.docs.map((hileraDoc) async {
+        final numeroHilera = _parseInt(hileraDoc.data()['numero']);
+        final matasSnap = await hileraDoc.reference
+            .collection('matas')
+            .orderBy('numero')
+            .get();
+
+        final rowsByMata = await Future.wait(
+          matasSnap.docs.map((mataDoc) async {
+            final numeroMata = _parseInt(mataDoc.data()['numero']);
+            final mataData = mataDoc.data();
+            final ultimo = mataData['ultimoConteoDardos'];
+            if (ultimo is Map) {
+              final ultimoData = Map<String, dynamic>.from(ultimo);
+              return toRow(
+                numeroHilera: numeroHilera,
+                numeroMata: numeroMata,
+                data: ultimoData,
+              );
+            }
+
+            final conteoSnap = await mataDoc.reference
+                .collection('conteo_dardos')
+                .orderBy('fecha', descending: true)
+                .limit(1)
+                .get();
+            if (conteoSnap.docs.isEmpty) return null;
+
+            return toRow(
+              numeroHilera: numeroHilera,
+              numeroMata: numeroMata,
+              data: conteoSnap.docs.first.data(),
+            );
+          }),
+        );
+
+        return rowsByMata.whereType<_ConteoDardoExportRow>().toList();
+      }),
+    );
+
+    return rowsByHilera.expand((e) => e).toList();
+  }
+
+  Future<void> _exportarDardosExcel({
+    String? cuartelId,
+    Cuartel? cuartel,
+  }) async {
+    final exportAll = cuartelId == null;
+    if (!exportAll && cuartel == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Selecciona un cuartel para exportar'),
+          backgroundColor: Theme.of(context).colorScheme.secondary,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _exporting = true);
+
+    try {
+      final excel = Excel.createExcel();
+      if (exportAll) {
+        final cuarteles = await _firestore.getCuarteles().first;
+        final rowsPorCuartel = await Future.wait(
+          cuarteles.map((c) {
+            return _buildExportRowsForCuartel(
+              cuartelId: c.id,
+              cuartelNombre: c.nombre,
+            );
+          }),
+        );
+        final usedSheetNames = <String>{};
+        var firstSheet = true;
+        var hasData = false;
+        for (int idx = 0; idx < cuarteles.length; idx++) {
+          final c = cuarteles[idx];
+          final rows = rowsPorCuartel[idx];
+          if (rows.isEmpty) continue;
+          hasData = true;
+          rows.sort((a, b) {
+            final h = a.numeroHilera.compareTo(b.numeroHilera);
+            if (h != 0) return h;
+            return a.numeroMata.compareTo(b.numeroMata);
+          });
+
+          var base = _safeSheetName(c.nombre);
+          var name = base;
+          var i = 2;
+          while (usedSheetNames.contains(name)) {
+            final suffix = '_$i';
+            final cut = (base.length + suffix.length > 31)
+                ? base.substring(0, 31 - suffix.length)
+                : base;
+            name = '$cut$suffix';
+            i++;
+          }
+          usedSheetNames.add(name);
+
+          if (firstSheet) {
+            excel.rename('Sheet1', name);
+            firstSheet = false;
+          }
+          final Sheet sheet = excel[name];
+
+          sheet.appendRow([TextCellValue('Cuartel: ${c.nombre}')]);
+          sheet.appendRow([]);
+          sheet.appendRow([
+            TextCellValue('Hilera'),
+            TextCellValue('Planta'),
+            TextCellValue('3'),
+            TextCellValue('4'),
+            TextCellValue('5'),
+            TextCellValue('6'),
+            TextCellValue('7'),
+            TextCellValue('8'),
+            TextCellValue('9'),
+            TextCellValue('10'),
+            TextCellValue('Total'),
+            TextCellValue('Ramillas'),
+          ]);
+
+          for (final row in rows) {
+            sheet.appendRow([
+              IntCellValue(row.numeroHilera),
+              IntCellValue(row.numeroMata),
+              IntCellValue(row.dardosPorYema[3] ?? 0),
+              IntCellValue(row.dardosPorYema[4] ?? 0),
+              IntCellValue(row.dardosPorYema[5] ?? 0),
+              IntCellValue(row.dardosPorYema[6] ?? 0),
+              IntCellValue(row.dardosPorYema[7] ?? 0),
+              IntCellValue(row.dardosPorYema[8] ?? 0),
+              IntCellValue(row.dardosPorYema[9] ?? 0),
+              IntCellValue(row.dardosPorYema[10] ?? 0),
+              IntCellValue(row.cantidadDardos),
+              IntCellValue(row.ramillas),
+            ]);
+          }
+        }
+
+        if (!hasData) {
+          throw Exception('No hay plantas con conteo de dardos');
+        }
+      } else {
+        final selectedCuartel = cuartel!;
+        final rows = await _buildExportRowsForCuartel(
+          cuartelId: cuartelId,
+          cuartelNombre: selectedCuartel.nombre,
+        );
+        if (rows.isEmpty) {
+          throw Exception('No hay plantas con conteo de dardos en este cuartel');
+        }
+        rows.sort((a, b) {
+          final h = a.numeroHilera.compareTo(b.numeroHilera);
+          if (h != 0) return h;
+          return a.numeroMata.compareTo(b.numeroMata);
+        });
+
+        const sheetName = 'Conteo dardos';
+        excel.rename('Sheet1', sheetName);
+        final Sheet sheet = excel[sheetName];
+        sheet.appendRow([TextCellValue('Cuartel: ${selectedCuartel.nombre}')]);
+        sheet.appendRow([]);
+        sheet.appendRow([
+          TextCellValue('Hilera'),
+          TextCellValue('Planta'),
+          TextCellValue('3'),
+          TextCellValue('4'),
+          TextCellValue('5'),
+          TextCellValue('6'),
+          TextCellValue('7'),
+          TextCellValue('8'),
+          TextCellValue('9'),
+          TextCellValue('10'),
+          TextCellValue('Total'),
+          TextCellValue('Ramillas'),
+        ]);
+
+        for (final row in rows) {
+          sheet.appendRow([
+            IntCellValue(row.numeroHilera),
+            IntCellValue(row.numeroMata),
+            IntCellValue(row.dardosPorYema[3] ?? 0),
+            IntCellValue(row.dardosPorYema[4] ?? 0),
+            IntCellValue(row.dardosPorYema[5] ?? 0),
+            IntCellValue(row.dardosPorYema[6] ?? 0),
+            IntCellValue(row.dardosPorYema[7] ?? 0),
+            IntCellValue(row.dardosPorYema[8] ?? 0),
+            IntCellValue(row.dardosPorYema[9] ?? 0),
+            IntCellValue(row.dardosPorYema[10] ?? 0),
+            IntCellValue(row.cantidadDardos),
+            IntCellValue(row.ramillas),
+          ]);
+        }
+      }
+
+      final bytes = excel.save();
+      if (bytes == null) {
+        throw Exception('No se pudo generar el archivo Excel');
+      }
+
+      final dir = await getTemporaryDirectory();
+      final fileName = exportAll
+          ? 'conteo_dardos_todos_los_cuarteles.xlsx'
+          : 'conteo_dardos_${_safeFileName(cuartel!.nombre)}.xlsx';
+      final file = File('${dir.path}/$fileName');
+      await file.writeAsBytes(bytes, flush: true);
+
+      if (!mounted) return;
+      await Share.shareXFiles(
+        [
+          XFile(
+            file.path,
+            mimeType:
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          ),
+        ],
+        text: exportAll
+            ? 'Conteo de dardos por planta - Todos los cuarteles'
+            : 'Conteo de dardos por planta - ${cuartel!.nombre}',
+        subject: exportAll
+            ? 'Conteo de dardos - Todos los cuarteles'
+            : 'Conteo de dardos ${cuartel!.nombre}',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al exportar: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _mostrarOpcionesExportacion() async {
+    if (_exporting) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.filter_alt),
+                  title: const Text('Exportar cuartel seleccionado'),
+                  subtitle: const Text('Solo requiere elegir cuartel'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _exportarDardosExcel(cuartelId: _cuartelId, cuartel: _cuartel);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.public),
+                  title: const Text('Exportar todos los cuarteles'),
+                  subtitle: const Text('Archivo general'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _exportarDardosExcel();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -92,6 +428,19 @@ class _ConteosScreenState extends State<ConteosScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Conteos'),
+        actions: [
+          IconButton(
+            tooltip: 'Exportar Excel de dardos',
+            onPressed: _exporting ? null : _mostrarOpcionesExportacion,
+            icon: _exporting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.file_download),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -342,9 +691,22 @@ class _ConteosScreenState extends State<ConteosScreen> {
                   children: docs.map((d) {
                     final data = d.data();
                     final count = data['cantidadDardos'] ?? 0;
+                    final ramillas = _parseInt(data['ramillas']);
+                    final rawMap = data['dardosPorYema'];
+                    String detalle = '';
+                    if (rawMap is Map) {
+                      final parts = <String>[];
+                      for (final entry in rawMap.entries) {
+                        parts.add('${entry.key}y: ${entry.value}');
+                      }
+                      parts.sort();
+                      if (parts.isNotEmpty) {
+                        detalle = ' (${parts.join(', ')})';
+                      }
+                    }
                     final ts = data['fecha'] as Timestamp?;
                     return _RowItem(
-                      title: 'Cantidad: $count',
+                      title: 'Cantidad: $count$detalle · Ramillas: $ramillas',
                       subtitle: ts == null ? 'Sin fecha' : _dateFmt.format(ts.toDate()),
                     );
                   }).toList(),
@@ -409,6 +771,24 @@ class _ConteosScreenState extends State<ConteosScreen> {
       },
     );
   }
+}
+
+class _ConteoDardoExportRow {
+  final String cuartelNombre;
+  final int numeroHilera;
+  final int numeroMata;
+  final Map<int, int> dardosPorYema;
+  final int cantidadDardos;
+  final int ramillas;
+
+  const _ConteoDardoExportRow({
+    required this.cuartelNombre,
+    required this.numeroHilera,
+    required this.numeroMata,
+    required this.dardosPorYema,
+    required this.cantidadDardos,
+    required this.ramillas,
+  });
 }
 
 class _SectionCard extends StatelessWidget {

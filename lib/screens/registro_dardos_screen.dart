@@ -28,17 +28,33 @@ class RegistroDardosScreen extends StatefulWidget {
 }
 
 class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
-  final _cantidadCtrl = TextEditingController();
+  late final Map<int, int> _conteoPorYema;
+  int _ramillas = 0;
   final FloracionService _service = FloracionService();
   bool _saving = false;
 
-  Future<void> _guardar() async {
-    final cantidad = int.tryParse(_cantidadCtrl.text);
+  @override
+  void initState() {
+    super.initState();
+    _conteoPorYema = {for (int yemas = 3; yemas <= 10; yemas++) yemas: 0};
+  }
 
-    if (cantidad == null || cantidad < 0) {
+  Future<void> _guardar() async {
+    final conteoPorYema = <int, int>{};
+    int totalDardos = 0;
+
+    for (int yemas = 3; yemas <= 10; yemas++) {
+      final val = _conteoPorYema[yemas] ?? 0;
+      if (val > 0) {
+        conteoPorYema[yemas] = val;
+        totalDardos += val;
+      }
+    }
+
+    if (totalDardos == 0 && _ramillas == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Ingresa un valor valido'),
+          content: Text('Ingresa al menos un dardo o una ramilla'),
           backgroundColor: Theme.of(context).colorScheme.secondary,
         ),
       );
@@ -55,7 +71,9 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
         cuartelId: widget.cuartelId,
         hileraId: widget.hileraId,
         mataId: widget.mataId,
-        cantidadDardos: cantidad,
+        cantidadDardos: totalDardos,
+        dardosPorYema: conteoPorYema,
+        ramillas: _ramillas,
         uid: uid,
         lat: pos.latitude,
         lng: pos.longitude,
@@ -69,7 +87,7 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
           backgroundColor: Theme.of(context).colorScheme.primary,
         ),
       );
-      await TtsService.instance.speak('Dardos registrados');
+      TtsService.instance.speak('Dardos registrados');
 
       Navigator.pop(context);
     } catch (e) {
@@ -87,7 +105,6 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
 
   @override
   void dispose() {
-    _cantidadCtrl.dispose();
     super.dispose();
   }
 
@@ -108,19 +125,82 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Cantidad de dardos',
+              'Cantidad de dardos por tipo de yemas (3 a 10)',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 6),
-            TextField(
-              controller: _cantidadCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                hintText: 'Ej: 5',
-                border: OutlineInputBorder(),
+            Text(
+              'Total dardos: ${_conteoPorYema.values.fold<int>(0, (a, b) => a + b)}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              child: ListTile(
+                title: const Text('Ramillas'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: _saving || _ramillas == 0
+                          ? null
+                          : () => setState(() => _ramillas = _ramillas - 1),
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Text(
+                      '$_ramillas',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _ramillas = _ramillas + 1),
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const Spacer(),
+            const SizedBox(height: 10),
+            Expanded(
+              child: GridView.builder(
+                itemCount: 8,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1.8,
+                ),
+                itemBuilder: (_, index) {
+                  final yemas = index + 3;
+                  final cantidad = _conteoPorYema[yemas] ?? 0;
+                  return ElevatedButton(
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            setState(() {
+                              _conteoPorYema[yemas] = cantidad + 1;
+                            });
+                          },
+                    onLongPress: _saving
+                        ? null
+                        : () {
+                            if (cantidad == 0) return;
+                            setState(() {
+                              _conteoPorYema[yemas] = cantidad - 1;
+                            });
+                          },
+                    child: Text(
+                      '$yemas yemas\n$cantidad',
+                      textAlign: TextAlign.center,
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(

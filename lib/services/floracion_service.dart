@@ -51,6 +51,36 @@ class FloracionService {
         .collection('conteo_dardos');
   }
 
+  CollectionReference<Map<String, dynamic>> _conteoFloresPorYemaRef({
+    required String cuartelId,
+    required String hileraId,
+    required String mataId,
+  }) {
+    return _db
+        .collection('cuarteles')
+        .doc(cuartelId)
+        .collection('hileras')
+        .doc(hileraId)
+        .collection('matas')
+        .doc(mataId)
+        .collection('conteo_flores_yema');
+  }
+
+  CollectionReference<Map<String, dynamic>> _conteoFrutosPorYemaRef({
+    required String cuartelId,
+    required String hileraId,
+    required String mataId,
+  }) {
+    return _db
+        .collection('cuarteles')
+        .doc(cuartelId)
+        .collection('hileras')
+        .doc(hileraId)
+        .collection('matas')
+        .doc(mataId)
+        .collection('conteo_frutos_yema');
+  }
+
   CollectionReference<Map<String, dynamic>> _frutosPorFlorRef({
     required String cuartelId,
     required String hileraId,
@@ -284,14 +314,21 @@ class FloracionService {
     required String hileraId,
     required String mataId,
     required int cantidadDardos,
+    Map<int, int>? dardosPorYema,
+    int ramillas = 0,
     required String uid,
     double? lat,
     double? lng,
   }) async {
     final id = _uuid.v4();
 
+    final dardosPorYemaData = (dardosPorYema ?? <int, int>{})
+        .map((k, v) => MapEntry(k.toString(), v));
+
     final data = {
       'cantidadDardos': cantidadDardos,
+      'dardosPorYema': dardosPorYemaData,
+      'ramillas': ramillas,
       'fecha': FieldValue.serverTimestamp(),
       'uid': uid,
     };
@@ -301,49 +338,122 @@ class FloracionService {
       data['lng'] = lng;
     }
 
-    final dardosSnap = await _dardosRef(
-      cuartelId: cuartelId,
-      hileraId: hileraId,
-      mataId: mataId,
-    ).get();
-
-    final existing = <int>{};
-    for (final d in dardosSnap.docs) {
-      final numero = d.data()['numero'];
-      if (numero is int) {
-        existing.add(numero);
-      } else if (numero is num) {
-        existing.add(numero.toInt());
-      }
-    }
-
-    final batch = _db.batch();
-
-    for (int i = 1; i <= cantidadDardos; i++) {
-      if (existing.contains(i)) continue;
-
-      final docId = _uuid.v4();
-      final ref = _dardosRef(
-        cuartelId: cuartelId,
-        hileraId: hileraId,
-        mataId: mataId,
-      ).doc(docId);
-
-      batch.set(ref, {
-        'numero': i,
-        'createdAt': FieldValue.serverTimestamp(),
-        'uid': uid,
-      });
-    }
-
     final conteoRef = _conteoDardosRef(
       cuartelId: cuartelId,
       hileraId: hileraId,
       mataId: mataId,
     ).doc(id);
 
+    final mataRef = _db
+        .collection('cuarteles')
+        .doc(cuartelId)
+        .collection('hileras')
+        .doc(hileraId)
+        .collection('matas')
+        .doc(mataId);
+
+    final batch = _db.batch();
     batch.set(conteoRef, data);
+    batch.set(
+      mataRef,
+      {
+        'ultimoConteoDardos': {
+          'cantidadDardos': cantidadDardos,
+          'dardosPorYema': dardosPorYemaData,
+          'ramillas': ramillas,
+          'fecha': FieldValue.serverTimestamp(),
+          'uid': uid,
+          if (lat != null) 'lat': lat,
+          if (lng != null) 'lng': lng,
+        },
+      },
+      SetOptions(merge: true),
+    );
     await batch.commit();
+  }
+
+  Future<Map<int, int>> getUltimoConteoDardosPorYema({
+    required String cuartelId,
+    required String hileraId,
+    required String mataId,
+  }) async {
+    final snap = await _conteoDardosRef(
+      cuartelId: cuartelId,
+      hileraId: hileraId,
+      mataId: mataId,
+    ).orderBy('fecha', descending: true).limit(1).get();
+
+    if (snap.docs.isEmpty) return {};
+
+    final data = snap.docs.first.data();
+    final raw = data['dardosPorYema'];
+    if (raw is! Map) return {};
+
+    final parsed = <int, int>{};
+    raw.forEach((key, value) {
+      final k = int.tryParse(key.toString());
+      final v = value is num ? value.toInt() : int.tryParse(value.toString());
+      if (k != null && v != null && k >= 3 && k <= 10 && v > 0) {
+        parsed[k] = v;
+      }
+    });
+    return parsed;
+  }
+
+  Future<void> registrarConteoFloresPorYema({
+    required String cuartelId,
+    required String hileraId,
+    required String mataId,
+    required Map<int, int> floresPorYema,
+    required String uid,
+    double? lat,
+    double? lng,
+  }) async {
+    final id = _uuid.v4();
+    final data = {
+      'floresPorYema': floresPorYema.map((k, v) => MapEntry(k.toString(), v)),
+      'fecha': FieldValue.serverTimestamp(),
+      'uid': uid,
+    };
+
+    if (lat != null && lng != null) {
+      data['lat'] = lat;
+      data['lng'] = lng;
+    }
+
+    await _conteoFloresPorYemaRef(
+      cuartelId: cuartelId,
+      hileraId: hileraId,
+      mataId: mataId,
+    ).doc(id).set(data);
+  }
+
+  Future<void> registrarConteoFrutosPorYema({
+    required String cuartelId,
+    required String hileraId,
+    required String mataId,
+    required Map<int, int> frutosPorYema,
+    required String uid,
+    double? lat,
+    double? lng,
+  }) async {
+    final id = _uuid.v4();
+    final data = {
+      'frutosPorYema': frutosPorYema.map((k, v) => MapEntry(k.toString(), v)),
+      'fecha': FieldValue.serverTimestamp(),
+      'uid': uid,
+    };
+
+    if (lat != null && lng != null) {
+      data['lat'] = lat;
+      data['lng'] = lng;
+    }
+
+    await _conteoFrutosPorYemaRef(
+      cuartelId: cuartelId,
+      hileraId: hileraId,
+      mataId: mataId,
+    ).doc(id).set(data);
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getConteosDardosQuery({

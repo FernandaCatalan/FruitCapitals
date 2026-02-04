@@ -148,21 +148,21 @@ class _ObservationScreenState extends State<ObservationScreen> {
         children: [
           _ActionCard(
             title: 'Conteo de dardos',
-            subtitle: 'Registra el total de dardos en una planta',
+            subtitle: 'Registra dardos por tipo de yemas (3 a 10)',
             icon: Icons.grain,
             iconColor: scheme.primary,
             onTap: _startConteoDardos,
           ),
           _ActionCard(
             title: 'Conteo de flores',
-            subtitle: 'Selecciona un dardo y registra cuantas flores',
+            subtitle: 'Registra flores por tipo de yemas',
             icon: Icons.local_florist,
             iconColor: scheme.primary,
             onTap: _startConteoFlores,
           ),
           _ActionCard(
             title: 'Conteo de frutos por flor',
-            subtitle: 'Selecciona una flor y registra cuantos frutos',
+            subtitle: 'Registra frutos por tipo de yemas',
             icon: Icons.apple,
             iconColor: scheme.primary,
             onTap: _startConteoFrutos,

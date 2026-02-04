@@ -66,6 +66,19 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _closeCuartel() {
+    if (_creating) {
+      if (_currentPolygonPoints.length < 3) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Agrega al menos 3 puntos para cerrar el cuartel'),
+          ),
+        );
+        return;
+      }
+      _showCuartelForm();
+      return;
+    }
+
     setState(() {
       _selectedCuartel = null;
       _buildPolygons();
@@ -711,7 +724,8 @@ class _MapScreenState extends State<MapScreen> {
                     icon: Icons.close,
                     label: 'Cerrar cuartel',
                     compact: isJefeView,
-                    onPressed: _selectedCuartel == null ? null : _closeCuartel,
+                    onPressed:
+                        (!_creating && _selectedCuartel == null) ? null : _closeCuartel,
                   ),
                   const SizedBox(height: 10),
                   _buildActionFab(

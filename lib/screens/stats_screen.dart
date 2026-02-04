@@ -53,6 +53,36 @@ class _StatsScreenState extends State<StatsScreen> {
             return true;
           }).toList();
 
+          if (entregas.isEmpty) {
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Filtros',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No hay datos para los filtros seleccionados.',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.secondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
           double total = 0;
           final Map<String, double> porCuartel = {};
           final Map<String, double> porDia = {};
@@ -73,6 +103,14 @@ class _StatsScreenState extends State<StatsScreen> {
               .map((e) => e.cuartelNombre)
               .toSet()
               .toList();
+          final porCuartelEntries = porCuartel.entries.toList()
+            ..sort((a, b) => b.value.compareTo(a.value));
+          final maxCuartelY = porCuartelEntries.isEmpty
+              ? 10.0
+              : porCuartelEntries
+                      .map((e) => e.value)
+                      .reduce((a, b) => a > b ? a : b) *
+                  1.2;
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -194,91 +232,114 @@ class _StatsScreenState extends State<StatsScreen> {
 
               const SizedBox(height: 24),
 
-              const Text(
-                'Entregas por cuartel',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-
-              const SizedBox(height: 12),
-
-              SizedBox(
-                height: 320,
-                child: BarChart(
-                  BarChartData(
-                    barGroups: porCuartel.entries.map((e) {
-                      final index = porCuartel.keys.toList().indexOf(e.key);
-
-                      return BarChartGroupData(
-                        x: index,
-                        barRods: [
-                          BarChartRodData(
-                            toY: e.value,
-                            width: 20,
-                            color: Colors.blue,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ],
-                      );
-                    }).toList(),
-
-                    titlesData: FlTitlesData(
-                      leftTitles: AxisTitles(
-                        sideTitles: SideTitles(showTitles: true),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Entregas por cuartel',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-
-                      rightTitles: AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-
-                      topTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          getTitlesWidget: (value, meta) {
-                            if (value.toInt() >= porCuartel.length) {
-                              return const SizedBox();
-                            }
-
-                            final cuartel =
-                                porCuartel.keys.elementAt(value.toInt());
-                            final cantidad = porCuartel[cuartel]!;
-
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: Text(
-                                '${cantidad.toStringAsFixed(0)} kg',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 280,
+                        child: porCuartelEntries.isEmpty
+                            ? const Center(child: Text('Sin datos'))
+                            : BarChart(
+                                BarChartData(
+                                  maxY: maxCuartelY,
+                                  barGroups: List.generate(
+                                    porCuartelEntries.length,
+                                    (index) {
+                                      final e = porCuartelEntries[index];
+                                      return BarChartGroupData(
+                                        x: index,
+                                        barRods: [
+                                          BarChartRodData(
+                                            toY: e.value,
+                                            width: 18,
+                                            color: Colors.blue,
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                  barTouchData: BarTouchData(
+                                    enabled: true,
+                                    touchTooltipData: BarTouchTooltipData(
+                                      getTooltipItem: (group, _, rod, __) {
+                                        final entry = porCuartelEntries[group.x];
+                                        return BarTooltipItem(
+                                          '${entry.key}\n${rod.toY.toStringAsFixed(1)} kg',
+                                          const TextStyle(color: Colors.white),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  titlesData: FlTitlesData(
+                                    leftTitles: AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        reservedSize: 42,
+                                        getTitlesWidget: (value, meta) => Text(
+                                          value.toStringAsFixed(0),
+                                          style: const TextStyle(fontSize: 10),
+                                        ),
+                                      ),
+                                    ),
+                                    rightTitles: const AxisTitles(
+                                      sideTitles: SideTitles(showTitles: false),
+                                    ),
+                                    topTitles: const AxisTitles(
+                                      sideTitles: SideTitles(showTitles: false),
+                                    ),
+                                    bottomTitles: AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        reservedSize: 48,
+                                        getTitlesWidget: (value, meta) {
+                                          final idx = value.toInt();
+                                          if (idx < 0 || idx >= porCuartelEntries.length) {
+                                            return const SizedBox();
+                                          }
+                                          final name = porCuartelEntries[idx].key;
+                                          final short = name.length > 8
+                                              ? '${name.substring(0, 8)}...'
+                                              : name;
+                                          return SideTitleWidget(
+                                            axisSide: meta.axisSide,
+                                            space: 4,
+                                            child: Text(
+                                              short,
+                                              style: const TextStyle(fontSize: 10),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                  gridData: FlGridData(show: true),
+                                  borderData: FlBorderData(show: false),
                                 ),
                               ),
-                            );
-                          },
-                        ),
                       ),
-
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 60,
-                          getTitlesWidget: (value, meta) {
-                            if (value.toInt() >= porCuartel.length) {
-                              return const SizedBox();
-                            }
-
-                            return Transform.rotate(
-                              angle: -0.6,
-                              child: Text(
-                                porCuartel.keys.elementAt(value.toInt()),
-                                style: const TextStyle(fontSize: 9),
-                              ),
-                            );
-                          },
-                        ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Referencia',
+                        style: TextStyle(fontWeight: FontWeight.bold),
                       ),
-                    ),
-
-                    gridData: FlGridData(show: true),
-                    borderData: FlBorderData(show: false),
+                      const SizedBox(height: 6),
+                      ...List.generate(porCuartelEntries.length, (index) {
+                        final e = porCuartelEntries[index];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Text('${e.key} - ${e.value.toStringAsFixed(1)} kg'),
+                        );
+                      }),
+                    ],
                   ),
                 ),
               ),
@@ -290,15 +351,25 @@ class _StatsScreenState extends State<StatsScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
 
-              ...porDia.entries.map(
-                (e) => ListTile(
-                  leading:
-                      const Icon(Icons.calendar_today, size: 18),
-                  title: Text(e.key),
-                  trailing:
-                      Text('${e.value.toStringAsFixed(1)} kg'),
-                ),
-              ),
+              ...(() {
+                final dias = porDia.entries.toList()
+                  ..sort((a, b) => b.key.compareTo(a.key));
+                final maxDia = dias.isEmpty
+                    ? 1.0
+                    : dias.map((e) => e.value).reduce((a, b) => a > b ? a : b);
+                return dias.map((e) {
+                  final progress = maxDia == 0 ? 0.0 : (e.value / maxDia);
+                  return ListTile(
+                    leading: const Icon(Icons.calendar_today, size: 18),
+                    title: Text(e.key),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: LinearProgressIndicator(value: progress),
+                    ),
+                    trailing: Text('${e.value.toStringAsFixed(1)} kg'),
+                  );
+                });
+              })(),
             ],
           );
         },
@@ -306,3 +377,4 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 }
+

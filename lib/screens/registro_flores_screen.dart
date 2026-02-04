@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 
 import '../services/floracion_service.dart';
 import '../services/location_service.dart';
@@ -14,8 +14,8 @@ class RegistroFloresScreen extends StatefulWidget {
   const RegistroFloresScreen({
     super.key,
     required this.mataId,
-    this.dardoIdPreseleccionado, 
-    required this.cuartelId, 
+    this.dardoIdPreseleccionado,
+    required this.cuartelId,
     required this.hileraId,
   });
 
@@ -24,24 +24,63 @@ class RegistroFloresScreen extends StatefulWidget {
 }
 
 class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
-  final _cantidadCtrl = TextEditingController();
   final FloracionService _service = FloracionService();
+  late final Map<int, int> _floresPorYemaUi;
+  Map<int, int> _dardosPorYema = {};
 
-  String? _dardoIdSeleccionado;
+  bool _loadingDardos = true;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _dardoIdSeleccionado = widget.dardoIdPreseleccionado;
+    _floresPorYemaUi = {for (int yemas = 3; yemas <= 10; yemas++) yemas: 0};
+    _cargarDardosPorYema();
+  }
+
+  Future<void> _cargarDardosPorYema() async {
+    try {
+      final data = await _service.getUltimoConteoDardosPorYema(
+        cuartelId: widget.cuartelId,
+        hileraId: widget.hileraId,
+        mataId: widget.mataId,
+      );
+      if (!mounted) return;
+      setState(() => _dardosPorYema = data);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingDardos = false);
+      }
+    }
   }
 
   Future<void> _guardar() async {
-    final cantidad = int.tryParse(_cantidadCtrl.text);
-
-    if (_dardoIdSeleccionado == null || cantidad == null || cantidad <= 0) {
+    if (_dardosPorYema.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Completa todos los campos'), backgroundColor: Colors.orange),
+        const SnackBar(
+          content: Text('Primero registra el conteo de dardos'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final floresPorYema = <int, int>{};
+    int total = 0;
+    for (final entry in _dardosPorYema.entries) {
+      final yemas = entry.key;
+      final value = _floresPorYemaUi[yemas] ?? 0;
+      if (value < 0) continue;
+      floresPorYema[yemas] = value;
+      total += value;
+    }
+
+    if (total == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ingresa al menos una flor por tipo'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
@@ -52,12 +91,11 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
       final pos = await LocationService.getCurrentLocation();
       final uid = FirebaseAuth.instance.currentUser!.uid;
 
-      await _service.registrarFlores(
+      await _service.registrarConteoFloresPorYema(
         cuartelId: widget.cuartelId,
         hileraId: widget.hileraId,
         mataId: widget.mataId,
-        dardoId: _dardoIdSeleccionado!,
-        cantidadFlores: cantidad,
+        floresPorYema: floresPorYema,
         uid: uid,
         lat: pos.latitude,
         lng: pos.longitude,
@@ -66,15 +104,18 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('🌸 Flores registradas'), backgroundColor: Colors.green),
+        const SnackBar(
+          content: Text('Flores registradas'),
+          backgroundColor: Colors.green,
+        ),
       );
-      await TtsService.instance.speak('Flores registradas');
+      TtsService.instance.speak('Flores registradas');
 
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Error: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -83,12 +124,13 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
 
   @override
   void dispose() {
-    _cantidadCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final tiposYema = _dardosPorYema.keys.toList()..sort();
+
     return Scaffold(
       appBar: AppBar(title: const Text('Conteo de flores')),
       body: Padding(
@@ -96,72 +138,68 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Dardo', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-
-            StreamBuilder(
-              stream: _service.getDardosPorMataQuery(
-                mataId: widget.mataId,
-                cuartelId: widget.cuartelId,
-                hileraId: widget.hileraId,
-              ),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) return Text('Error: ${snapshot.error}');
-                if (!snapshot.hasData) return const CircularProgressIndicator();
-
-                final docs = snapshot.data!.docs;
-
-                if (docs.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Text(
-                      'No hay dardos registrados. Registra primero el conteo de dardos.',
-                      style: TextStyle(color: Colors.orange),
-                    ),
-                  );
-                }
-
-                final ids = docs.map((d) => d.id).toSet();
-                final selected = ids.contains(_dardoIdSeleccionado)
-                    ? _dardoIdSeleccionado
-                    : null;
-
-                return DropdownButtonFormField<String>(
-                  value: selected,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: 'Selecciona un dardo',
+            const Text(
+              'Ingresa flores por tipo de dardo',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Total flores por dardo: ${_dardosPorYema.keys.fold<int>(0, (sum, y) => sum + (_floresPorYemaUi[y] ?? 0))}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+            if (_loadingDardos)
+              const Center(child: CircularProgressIndicator())
+            else if (_dardosPorYema.isEmpty)
+              const Text(
+                'No hay conteo de dardos por yemas para esta planta. Registra dardos primero.',
+                style: TextStyle(color: Colors.orange),
+              )
+            else
+              Expanded(
+                child: GridView.builder(
+                  itemCount: tiposYema.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 1.7,
                   ),
-                  items: docs.map((d) {
-                    return DropdownMenuItem(
-                      value: d.id,
-                      child: Text('Dardo ${(d.data()['numero'] ?? 0)}'),
+                  itemBuilder: (_, index) {
+                    final yemas = tiposYema[index];
+                    final cantidadDardos = _dardosPorYema[yemas]!;
+                    final flores = _floresPorYemaUi[yemas] ?? 0;
+                    return ElevatedButton(
+                      onPressed: _saving
+                          ? null
+                          : () {
+                              setState(() {
+                                _floresPorYemaUi[yemas] = flores + 1;
+                              });
+                            },
+                      onLongPress: _saving
+                          ? null
+                          : () {
+                              if (flores == 0) return;
+                              setState(() {
+                                _floresPorYemaUi[yemas] = flores - 1;
+                              });
+                            },
+                      child: Text(
+                        '$yemas yemas ($cantidadDardos dardos)\n$flores flores/dardo',
+                        textAlign: TextAlign.center,
+                      ),
                     );
-                  }).toList(),
-                  onChanged: (v) => setState(() => _dardoIdSeleccionado = v),
-                );
-              },
-            ),
-
-            const SizedBox(height: 16),
-            const Text('Cantidad de flores', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-
-            TextField(
-              controller: _cantidadCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                hintText: 'Ej: 20',
-                border: OutlineInputBorder(),
+                  },
+                ),
               ),
-            ),
-
-            const Spacer(),
-
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _saving ? null : _guardar,
+                onPressed: _saving || _loadingDardos || _dardosPorYema.isEmpty
+                    ? null
+                    : _guardar,
                 child: _saving
                     ? const CircularProgressIndicator(color: Colors.white)
                     : const Text('Guardar'),
