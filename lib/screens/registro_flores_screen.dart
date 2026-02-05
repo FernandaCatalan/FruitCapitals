@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/floracion_service.dart';
 import '../services/location_service.dart';
@@ -27,6 +28,8 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
   final FloracionService _service = FloracionService();
   late final Map<int, int> _floresPorYemaUi;
   Map<int, int> _dardosPorYema = {};
+  final Map<int, TextEditingController> _floresControllers = {};
+  bool _modoManual = false;
 
   bool _loadingDardos = true;
   bool _saving = false;
@@ -47,11 +50,35 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
       );
       if (!mounted) return;
       setState(() => _dardosPorYema = data);
+      if (_modoManual) {
+        _syncFloresControllers();
+      }
     } finally {
       if (mounted) {
         setState(() => _loadingDardos = false);
       }
     }
+  }
+
+  void _syncFloresControllers() {
+    for (final entry in _dardosPorYema.entries) {
+      final yemas = entry.key;
+      final value = _floresPorYemaUi[yemas] ?? 0;
+      final controller = _floresControllers.putIfAbsent(
+        yemas,
+        () => TextEditingController(text: '$value'),
+      );
+      if (controller.text != '$value') {
+        controller.text = '$value';
+      }
+    }
+  }
+
+  void _onFloresChanged(int yemas, String value) {
+    final parsed = int.tryParse(value) ?? 0;
+    setState(() {
+      _floresPorYemaUi[yemas] = parsed;
+    });
   }
 
   Future<void> _guardar() async {
@@ -124,6 +151,9 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
 
   @override
   void dispose() {
+    for (final controller in _floresControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -148,6 +178,24 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 10),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Ingreso manual'),
+              subtitle:
+                  const Text('Escribe el numero en vez de usar +/-'),
+              value: _modoManual,
+              onChanged: _saving || _loadingDardos || _dardosPorYema.isEmpty
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _modoManual = value;
+                        if (_modoManual) {
+                          _syncFloresControllers();
+                        }
+                      });
+                    },
+            ),
+            const SizedBox(height: 6),
             if (_loadingDardos)
               const Center(child: CircularProgressIndicator())
             else if (_dardosPorYema.isEmpty)
@@ -169,6 +217,45 @@ class _RegistroFloresScreenState extends State<RegistroFloresScreen> {
                     final yemas = tiposYema[index];
                     final cantidadDardos = _dardosPorYema[yemas]!;
                     final flores = _floresPorYemaUi[yemas] ?? 0;
+                    if (_modoManual) {
+                      final controller = _floresControllers.putIfAbsent(
+                        yemas,
+                        () => TextEditingController(text: '$flores'),
+                      );
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '$yemas yemas ($cantidadDardos dardos)',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              TextField(
+                                controller: controller,
+                                enabled: !_saving,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  hintText: '0',
+                                ),
+                                onChanged: (value) =>
+                                    _onFloresChanged(yemas, value),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
                     return ElevatedButton(
                       onPressed: _saving
                           ? null

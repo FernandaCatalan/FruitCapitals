@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../services/floracion_service.dart';
@@ -32,11 +33,33 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
   int _ramillas = 0;
   final FloracionService _service = FloracionService();
   bool _saving = false;
+  bool _modoManual = false;
+  final Map<int, TextEditingController> _conteoControllers = {};
 
   @override
   void initState() {
     super.initState();
     _conteoPorYema = {for (int yemas = 3; yemas <= 10; yemas++) yemas: 0};
+  }
+
+  void _syncConteoControllers() {
+    for (int yemas = 3; yemas <= 10; yemas++) {
+      final value = _conteoPorYema[yemas] ?? 0;
+      final controller = _conteoControllers.putIfAbsent(
+        yemas,
+        () => TextEditingController(text: '$value'),
+      );
+      if (controller.text != '$value') {
+        controller.text = '$value';
+      }
+    }
+  }
+
+  void _onConteoChanged(int yemas, String value) {
+    final parsed = int.tryParse(value) ?? 0;
+    setState(() {
+      _conteoPorYema[yemas] = parsed;
+    });
   }
 
   Future<void> _guardar() async {
@@ -105,6 +128,9 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
 
   @override
   void dispose() {
+    for (final controller in _conteoControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -134,6 +160,24 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Ingreso manual'),
+              subtitle:
+                  const Text('Escribe el numero en vez de usar +/-'),
+              value: _modoManual,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _modoManual = value;
+                        if (_modoManual) {
+                          _syncConteoControllers();
+                        }
+                      });
+                    },
+            ),
+            const SizedBox(height: 6),
             Card(
               child: ListTile(
                 title: const Text('Ramillas'),
@@ -176,6 +220,43 @@ class _RegistroDardosScreenState extends State<RegistroDardosScreen> {
                 itemBuilder: (_, index) {
                   final yemas = index + 3;
                   final cantidad = _conteoPorYema[yemas] ?? 0;
+                  if (_modoManual) {
+                    final controller = _conteoControllers.putIfAbsent(
+                      yemas,
+                      () => TextEditingController(text: '$cantidad'),
+                    );
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              '$yemas yemas',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 6),
+                            TextField(
+                              controller: controller,
+                              enabled: !_saving,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                hintText: '0',
+                              ),
+                              onChanged: (value) =>
+                                  _onConteoChanged(yemas, value),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
                   return ElevatedButton(
                     onPressed: _saving
                         ? null
